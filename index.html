@@ -405,17 +405,48 @@ body {
 /* ── Grant era headers ───────────────────────────────────────── */
 .grants-era { margin-top: 20px; }
 .grants-era-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-family: system-ui, sans-serif;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: .13em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 0 0 8px;
+  padding: 0 16px 8px;
   border-bottom: 1px solid var(--rule);
-  margin: 0 16px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
-.grants-era-cards { padding: 0 16px; }
+.grants-era-header:active { opacity: .7; }
+.era-chevron {
+  font-size: 9px;
+  color: #ccc;
+  letter-spacing: 0;
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.grants-era.collapsed .era-chevron { transform: rotate(-90deg); }
+.grants-era-cards {
+  padding: 0 16px;
+}
+.grants-era.collapsed .grants-era-cards { display: none; }
+
+/* current-era badge on era header */
+.era-current-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  background: #E8EBF7;
+  color: var(--a1);
+  border-radius: 5px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
 
 /* ── Grant cards ─────────────────────────────────────────────── */
 .grant-card {
@@ -778,7 +809,10 @@ const BOOK_PHASES = [
 
 // ─── Grant data ───────────────────────────────────────────────────────────────
 const GRANT_ERAS = [
-  {id:'era1',label:'Years 1–3 (2026–2029) — Clean Window',grants:[
+  // activeFrom: the calendar date when this era becomes relevant.
+  // Upcoming logic only surfaces grants from the current era and earlier.
+  {id:'era1',label:'Years 1–3 (2026–2029) — Clean Window',
+   activeFrom:new Date('2026-08-01'),grants:[
     {id:'g-acls',name:'ACLS Fellowship',color:'#5C6FBD',
      award:'Up to $60,000 · 6–12 months',
      deadline:'Late September (annual)',
@@ -832,7 +866,8 @@ const GRANT_ERAS = [
      detail:'€2k–€10k for short Finland research stays (1-week minimum). Genuinely early-career-friendly. From October 2026, the Finnish Cultural Foundation consolidates to a single Oct 15–30 round. Framed for artists/critics — confirm fit before applying.',
      url:'https://skr.fi/en/grants/'},
   ]},
-  {id:'era2',label:'Years 3–4 (2028–2030) — Book 1 Completion',grants:[
+  {id:'era2',label:'Years 3–4 (2028–2030) — Book 1 Completion',
+   activeFrom:new Date('2028-01-01'),grants:[
     {id:'g-nhc',name:'National Humanities Center',color:'#5C6FBD',
      award:'Residential fellowship · full year · requires leave',
      deadline:'Early October (annual)',
@@ -843,7 +878,8 @@ const GRANT_ERAS = [
      detail:'Full-year residential fellowship in Research Triangle, NC. Apply when Book 1 is substantially drafted. Requires a full year of leave — coordinate timing carefully with your department and with the ACLS lapse rule around your semester sabbatical.',
      url:'https://nationalhumanitiescenter.org/become-a-fellow/'},
   ]},
-  {id:'era3',label:'Semester Sabbatical (~2030–31) — Launch Book 2',grants:[
+  {id:'era3',label:'Semester Sabbatical (~2030–31) — Launch Book 2',
+   activeFrom:new Date('2030-01-01'),grants:[
     {id:'g-camargo',name:'Camargo Foundation (Cassis, France)',color:'#B87050',
      award:'10 weeks · €350/week · housing provided',
      deadline:'October 1 (annual)',
@@ -879,7 +915,8 @@ const GRANT_ERAS = [
      detail:'Finnish-side scholar tracks separate from the U.S. Scholar program. Check the Fulbright Finland Foundation directly for current terms and deadlines — these operate differently from the U.S. side.',
      url:'https://www.fulbright.fi'},
   ]},
-  {id:'era4',label:'Post-Tenure (~2032–33) — Book 2 in Earnest',grants:[
+  {id:'era4',label:'Post-Tenure (~2032–33) — Book 2 in Earnest',
+   activeFrom:new Date('2031-06-01'),grants:[
     {id:'g-fchi',name:'Fox Center for Humanistic Inquiry (FCHI)',color:'#A07830',
      award:'Internal Emory residential fellowship',
      deadline:'Confirm with Emory annually',
@@ -906,7 +943,8 @@ const GRANT_ERAS = [
      detail:'Highly competitive humanities residencies. Both are significantly more competitive with a published monograph. Best positioned post-tenure.',
      url:'https://www.bfny.org'},
   ]},
-  {id:'era-ongoing',label:'Ongoing — Near Book 1 Contract',grants:[
+  {id:'era-ongoing',label:'Ongoing — Near Book 1 Contract',
+   activeFrom:new Date('2029-01-01'),grants:[
     {id:'g-ams',name:'AMS Subvention Grant',color:'#7A7A7A',
      award:'Publication subsidy · amount varies',
      deadline:'Varies by cycle',
@@ -924,6 +962,7 @@ let state = {
   checked: {},
   bookExpanded: {proposal:true},
   grantExpanded: {},
+  eraCollapsed: {},   // future eras start collapsed
   taskExpanded: {},
   activeTab: 'upcoming'
 };
@@ -934,6 +973,13 @@ function loadState() {
     if (raw) state = {...state, ...JSON.parse(raw)};
   } catch(e) {}
   ['r1','r2','r3','r4'].forEach(id => { state.checked[id] = true; });
+  // Default: collapse eras that aren't yet active, unless user has set a preference
+  const eraIdx = currentGrantEraIndex();
+  GRANT_ERAS.forEach((era, i) => {
+    if (!(era.id in state.eraCollapsed)) {
+      state.eraCollapsed[era.id] = (i > eraIdx);
+    }
+  });
 }
 
 let saveTimer;
@@ -985,13 +1031,25 @@ function phaseDates(phase) {
 }
 
 // ─── Upcoming ─────────────────────────────────────────────────────────────────
-// Strategy: one item per section (book & grants) that is the soonest unchecked,
-// PLUS any additional items from either section with a deadline ≤ 60 days away.
+// Strategy:
+//   • Determine the "current era" = the last era whose activeFrom is ≤ today.
+//   • Only surface grant deadlines from the current era and earlier.
+//   • Show: soonest unchecked book task + soonest eligible grant deadline,
+//     plus anything from either with a deadline ≤ 60 days away.
+function currentGrantEraIndex() {
+  let idx = 0;
+  GRANT_ERAS.forEach((era, i) => {
+    if (era.activeFrom <= TODAY) idx = i;
+  });
+  return idx;
+}
+
 function buildUpcoming() {
-  const SOON = 60; // days threshold for "also show"
+  const SOON = 60;
+  const eraIdx = currentGrantEraIndex();
   let candidates = [];
 
-  // Book: collect all unchecked tasks
+  // Book: soonest unchecked task
   BOOK_PHASES.forEach(phase => {
     phase.tasks.forEach(task => {
       if (state.checked[task.id]) return;
@@ -1008,9 +1066,10 @@ function buildUpcoming() {
     });
   });
 
-  // Grants: collect all upcoming (within 1 year)
+  // Grants: only from current era and earlier
   const yearOut = new Date(TODAY); yearOut.setFullYear(yearOut.getFullYear()+1);
-  GRANT_ERAS.forEach(era => {
+  GRANT_ERAS.forEach((era, i) => {
+    if (i > eraIdx) return; // future era — skip
     era.grants.forEach(grant => {
       const due = grant.nextDue();
       if (!due) return;
@@ -1018,7 +1077,7 @@ function buildUpcoming() {
       if (d < -7 || due > yearOut) return;
       candidates.push({
         label: grant.name,
-        meta: 'Grant · ' + grant.deadline,
+        meta: 'Grant · ' + era.label.split(' —')[0],
         due,
         color: grant.color,
         section: 'grants',
@@ -1030,22 +1089,19 @@ function buildUpcoming() {
 
   candidates.sort((a,b) => a.due - b.due);
 
-  // Pick: soonest book + soonest grant + anything ≤ SOON days from either
+  // Pick: soonest book task + soonest grant + anything ≤ SOON days
   const shown = new Set();
   let result = [];
 
-  // Soonest book task
   const firstBook = candidates.find(c => c.section === 'book');
   if (firstBook) { shown.add(firstBook.label+'|'+firstBook.due); result.push(firstBook); }
 
-  // Soonest grant
   const firstGrant = candidates.find(c => c.section === 'grants');
   if (firstGrant) {
     const key = firstGrant.label+'|'+firstGrant.due;
     if (!shown.has(key)) { shown.add(key); result.push(firstGrant); }
   }
 
-  // Anything else ≤ SOON days
   candidates.forEach(c => {
     const key = c.label+'|'+c.due;
     if (shown.has(key)) return;
@@ -1100,7 +1156,15 @@ function handleUpcomingClick(el) {
     }, 80);
   } else if (section === 'grants') {
     switchTab('grants');
-    if (grantId) state.grantExpanded[grantId] = true;
+    if (grantId) {
+      state.grantExpanded[grantId] = true;
+      // Also un-collapse the era containing this grant
+      GRANT_ERAS.forEach(era => {
+        if (era.grants.some(g => g.id === grantId)) {
+          state.eraCollapsed[era.id] = false;
+        }
+      });
+    }
     render();
     setTimeout(() => {
       const target = document.getElementById('grant-'+grantId);
@@ -1179,8 +1243,12 @@ function renderBook() {
 
 // ─── Grants render ────────────────────────────────────────────────────────────
 function renderGrants() {
+  const eraIdx = currentGrantEraIndex();
   const container = document.getElementById('grants-eras');
-  container.innerHTML = GRANT_ERAS.map(era => {
+  container.innerHTML = GRANT_ERAS.map((era, i) => {
+    const isCurrent   = i === eraIdx;
+    const isCollapsed = !!state.eraCollapsed[era.id];
+
     const cards = era.grants.map(grant => {
       const isExp = !!state.grantExpanded[grant.id];
       const due   = grant.nextDue();
@@ -1220,8 +1288,13 @@ function renderGrants() {
       </div>`;
     }).join('');
 
-    return `<div class="grants-era">
-      <div class="grants-era-header">${era.label}</div>
+    const labelHtml = `${era.label}${isCurrent?'<span class="era-current-badge">Current</span>':''}`;
+
+    return `<div class="grants-era${isCollapsed?' collapsed':''}" id="era-${era.id}">
+      <div class="grants-era-header" onclick="toggleEra('${era.id}')">
+        <span>${labelHtml}</span>
+        <span class="era-chevron">▼</span>
+      </div>
       <div class="grants-era-cards">${cards}</div>
     </div>`;
   }).join('');
@@ -1240,6 +1313,11 @@ function handleBookTask(id, isPre, event) {
   }
   if (isPre) return;
   state.checked[id] = !state.checked[id];
+  saveState(); render();
+}
+
+function toggleEra(id) {
+  state.eraCollapsed[id] = !state.eraCollapsed[id];
   saveState(); render();
 }
 
